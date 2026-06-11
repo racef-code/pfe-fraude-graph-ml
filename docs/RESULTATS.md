@@ -34,9 +34,43 @@ détection ici ; un modèle tabulaire fort (XGBoost) sur les seules features fai
 mieux. Conclusion nuancée pour le mémoire : *le graphe seul ne suffit pas — la
 valeur vient de la façon de l'exploiter*, d'où l'intérêt des méthodes dédiées.
 
+### Pourquoi l'écart est crédible (analyse)
+
+- L'écart est **cohérent sur les 5 métriques**, pas du bruit. Le plus parlant :
+  **AUC-PR 0.81 vs 0.45** (×1.8) — c'est la métrique reine en fraude déséquilibrée.
+- Les 32 features YelpChi sont des **features comportementales** déjà très
+  discriminantes (littérature spam Yelp). XGBoost les exploite directement ;
+  GraphSAGE les **dilue** en moyennant des voisins majoritairement non-fraudeurs.
+- Le graphe `homo` est dense (degré moyen ≈ 167) → sur-lissage marqué.
+
+### Réserves à assumer dans le mémoire (ne pas cacher)
+
+1. **Un seul seed.** Pas de barre d'erreur → résultat attaquable par un jury.
+   **À refaire sur ≥5 seeds, rapporter moyenne ± écart-type.**
+2. **Pas de tuning du GNN** (64 hidden, 2 couches, full-batch, relation `homo`).
+   Un GNN mieux réglé (relation unique, sampling de voisins) réduirait l'écart
+   sans le combler probablement — à mentionner pour l'honnêteté.
+3. **Ne pas comparer aux chiffres PC-GNN publiés** : protocole/splits différents
+   (ici 60/20/20 stratifié). Rester sur la comparaison **interne** GraphSAGE vs
+   XGBoost, même protocole. Ne PAS conclure « on bat PC-GNN ».
+
+### Ce que ça dit vraiment
+
+Pas « les graphes sont inutiles » mais « **l'agrégation naïve échoue sous
+camouflage** ». Le pari de la thèse se joue sur les **données fiscales**, où les
+relations (dirigeant/adresse/comptable communs) sont probablement plus
+**homophiles** que YelpChi → le GNN pourrait y gagner. YelpChi = banc d'essai
+qui montre les limites du GNN naïf, pas le verdict final.
+
+### Pistes avant les données réelles
+
+- **Multi-seed** (moyenne ± std) pour la crédibilité.
+- **XGBoost + features de graphe** (degré, ratio de fraude des voisins) → tester
+  si l'hybride bat les deux modèles purs.
+
 ### Limites
 
-- Un seul dataset public, GraphSAGE vanilla, hyperparamètres par défaut.
+- Un seul dataset public, GraphSAGE vanilla, hyperparamètres par défaut, 1 seed.
 - Le résultat ne se transpose pas mécaniquement aux données fiscales réelles
   (structure de graphe différente, biais de sélection des labels).
 - Reproductible : `notebooks/02_yelpchi_pipeline.ipynb` (≈15 min CPU).
