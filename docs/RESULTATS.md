@@ -1,76 +1,93 @@
 # Résultats expérimentaux
 
+> Protocole : splits stratifiés 60/20/20, **moyenne ± écart-type sur 5 seeds**
+> (0–4). Déséquilibre géré par class weights (GNN) et `scale_pos_weight` (XGBoost).
+> Features normalisées (z-score, stats train uniquement) avant tous les modèles.
+> Reproductible : `python -m src.experiments.benchmark 5`.
+
 ## Étape 1 — Cora (validation mécanique GNN)
 
-GraphSAGE 2 couches, test accuracy = **0.798** (>0.75). Sert seulement à valider
-la pipeline PyG, pas à répondre à la question de recherche.
+GraphSAGE 2 couches, test accuracy = **0.798** (>0.75). Valide seulement la
+pipeline PyG, ne répond pas à la question de recherche.
 
-## Étape 2 — YelpChi (GraphSAGE vs XGBoost)
+## Étape 2 — YelpChi : baseline (GraphSAGE vs XGBoost vs XGBoost+graph)
 
-Dataset : 45 954 nœuds, 7 693 958 arêtes (relation `homo`), 32 features,
-taux de fraude ≈ 14,5 %. Splits stratifiés 60/20/20, seed 42.
-Gestion du déséquilibre : class weights (GNN) + `scale_pos_weight` (XGBoost).
+Dataset : 45 954 nœuds, 32 features, taux de fraude ≈ 14,5 %, relation `homo`
+(7,7 M arêtes).
 
 | Modèle | AUC-ROC | AUC-PR | F1-macro | GMean | Recall@k |
 |---|---|---|---|---|---|
-| GraphSAGE | 0.8012 | 0.4482 | 0.6301 | 0.7302 | 0.4449 |
-| **XGBoost** | **0.9417** | **0.8085** | **0.8263** | **0.8588** | **0.7236** |
+| GraphSAGE (homo) | 0.894 ± 0.002 | 0.676 ± 0.006 | 0.728 ± 0.003 | 0.812 ± 0.005 | 0.611 ± 0.008 |
+| XGBoost | 0.946 ± 0.003 | 0.819 ± 0.010 | 0.831 ± 0.008 | 0.870 ± 0.008 | 0.742 ± 0.015 |
+| **XGBoost+graph** | **0.951 ± 0.002** | **0.830 ± 0.009** | **0.838 ± 0.005** | **0.875 ± 0.007** | **0.751 ± 0.010** |
 
-### Lecture
+### Lectures
 
-Sur YelpChi, **XGBoost (sans graphe) bat largement GraphSAGE (avec graphe)**.
+**1. La normalisation est cruciale pour le GNN.** Sans normalisation, GraphSAGE
+plafonnait à 0.80 AUC. Avec (features brutes YelpChi à échelles très variées),
+il monte à **0.894**. XGBoost, scale-invariant, n'en profite pas. → un GNN doit
+recevoir des features préparées ; sinon on sous-estime le Graph ML.
 
-Ce n'est pas un échec de l'implémentation mais un résultat connu de la littérature :
-le graphe `homo` de YelpChi est **hétérophile** — les fraudeurs sont camouflés au
-milieu de voisins non-fraudeurs. GraphSAGE, qui agrège les voisins de façon
-uniforme, **lisse** le signal discriminant (over-smoothing / camouflage). C'est
-précisément la motivation des GNN spécialisés fraude (**CARE-GNN**, **PC-GNN**),
-qui pondèrent/échantillonnent les voisins pour contrer ce camouflage.
+**2. XGBoost > GraphSAGE sur `homo`.** Écart resserré mais réel (AUC 0.946 vs
+0.894 ; AUC-PR 0.819 vs 0.676). Cause : le graphe `homo` est **quasi
+non-homophile** (voir §homophilie) — les fraudeurs sont camouflés, et
+l'agrégation uniforme de GraphSAGE lisse le signal.
 
-### Réponse à la question de recherche (sur ce banc d'essai)
+**3. Les features de graphe aident le tabulaire (lift réel, modeste).**
+Comparaison **appariée** XGBoost+graph vs XGBoost (même split par seed) :
 
-Exploiter les relations avec un **GNN générique (GraphSAGE)** n'améliore PAS la
-détection ici ; un modèle tabulaire fort (XGBoost) sur les seules features fait
-mieux. Conclusion nuancée pour le mémoire : *le graphe seul ne suffit pas — la
-valeur vient de la façon de l'exploiter*, d'où l'intérêt des méthodes dédiées.
+| Métrique | Δ moyen | écart-type | seeds positifs |
+|---|---|---|---|
+| AUC-PR | **+0.0106** | 0.0045 | **5/5** |
+| AUC-ROC | **+0.0055** | 0.0018 | **5/5** |
 
-### Pourquoi l'écart est crédible (analyse)
+Positif sur les 5 seeds, std ≪ moyenne → effet consistant, pas du bruit. Mais
+c'est du **ML tabulaire enrichi**, pas du Graph ML : info de graphe réduite à
+2 features (degré, ratio de fraude des voisins-train, calculé sans fuite). Sert
+de borne « combien le graphe apporte sans message-passing ».
 
-- L'écart est **cohérent sur les 5 métriques**, pas du bruit. Le plus parlant :
-  **AUC-PR 0.81 vs 0.45** (×1.8) — c'est la métrique reine en fraude déséquilibrée.
-- Les 32 features YelpChi sont des **features comportementales** déjà très
-  discriminantes (littérature spam Yelp). XGBoost les exploite directement ;
-  GraphSAGE les **dilue** en moyennant des voisins majoritairement non-fraudeurs.
-- Le graphe `homo` est dense (degré moyen ≈ 167) → sur-lissage marqué.
+## Homophilie par relation (le levier Graph ML)
 
-### Réserves à assumer dans le mémoire (ne pas cacher)
+YelpChi est **multi-relationnel** : 3 relations, qu'on a écrasées en `homo`.
+Homophilie = % d'arêtes reliant 2 nœuds de même label. Baseline aléatoire
+(fraude 14,5 %) = 0,85² + 0,15² ≈ **0,752**.
 
-1. **Un seul seed.** Pas de barre d'erreur → résultat attaquable par un jury.
-   **À refaire sur ≥5 seeds, rapporter moyenne ± écart-type.**
-2. **Pas de tuning du GNN** (64 hidden, 2 couches, full-batch, relation `homo`).
-   Un GNN mieux réglé (relation unique, sampling de voisins) réduirait l'écart
-   sans le combler probablement — à mentionner pour l'honnêteté.
-3. **Ne pas comparer aux chiffres PC-GNN publiés** : protocole/splits différents
-   (ici 60/20/20 stratifié). Rester sur la comparaison **interne** GraphSAGE vs
-   XGBoost, même protocole. Ne PAS conclure « on bat PC-GNN ».
+| relation | arêtes | degré moy. | homophilie |
+|---|---|---|---|
+| homo | 7 693 958 | 167.4 | 0.773 |
+| net_rtr | 1 147 232 | 25.0 | 0.759 |
+| net_rsr | 6 805 486 | 148.1 | 0.772 |
+| **net_rur** | 98 630 | 2.1 | **0.996** |
 
-### Ce que ça dit vraiment
+→ `homo`/`rtr`/`rsr` ≈ aléatoire = **non homophiles** (camouflage) : c'est le
+mauvais graphe pour un GNN. `net_rur` est **quasi parfaitement homophile** (mais
+sparse). **Hypothèse centrale du volet Graph ML** : la faiblesse de GraphSAGE
+vient du graphe fourni, pas du GNN. Sur `net_rur`, le message-passing devrait
+enfin payer.
 
-Pas « les graphes sont inutiles » mais « **l'agrégation naïve échoue sous
-camouflage** ». Le pari de la thèse se joue sur les **données fiscales**, où les
-relations (dirigeant/adresse/comptable communs) sont probablement plus
-**homophiles** que YelpChi → le GNN pourrait y gagner. YelpChi = banc d'essai
-qui montre les limites du GNN naïf, pas le verdict final.
+## Expériences Graph ML (en cours)
 
-### Pistes avant les données réelles
+Volet GNN dédié, pour rester sur le sujet (Graph ML, pas du tabulaire) :
 
-- **Multi-seed** (moyenne ± std) pour la crédibilité.
-- **XGBoost + features de graphe** (degré, ratio de fraude des voisins) → tester
-  si l'hybride bat les deux modèles purs.
+1. **Sweep de relations** — GraphSAGE par relation (test de l'hypothèse ci-dessus).
+2. **GAT** — attention par arête, downweighte les voisins camouflés (`src/models/gat.py`).
+3. **GNN multi-relationnel** — combine les 3 relations avec poids appris.
 
-### Limites
+Résultats ajoutés ici à mesure.
 
-- Un seul dataset public, GraphSAGE vanilla, hyperparamètres par défaut, 1 seed.
-- Le résultat ne se transpose pas mécaniquement aux données fiscales réelles
-  (structure de graphe différente, biais de sélection des labels).
-- Reproductible : `notebooks/02_yelpchi_pipeline.ipynb` (≈15 min CPU).
+## Réponse (provisoire) à la question de recherche
+
+Sur la relation `homo`, un **GNN générique (GraphSAGE) n'améliore pas** la
+détection vs XGBoost. Mais l'analyse d'homophilie montre que `homo` est un
+mauvais graphe ; le volet Graph ML teste si le bon graphe / la bonne archi
+inverse la conclusion. Verdict final = données fiscales (relations attendues
+homophiles : dirigeant/adresse/comptable communs).
+
+## Réserves à assumer dans le mémoire
+
+1. **YelpChi reste un banc d'essai** ; les conclusions ne se transposent pas
+   mécaniquement au fiscal (structure différente, biais de sélection des labels).
+2. **Pas de tuning exhaustif** des GNN (hidden, couches, têtes) — comparaisons à
+   budget égal, pas une recherche d'archi optimale.
+3. **Ne pas comparer aux chiffres PC-GNN publiés** (protocole/splits différents) ;
+   rester sur les comparaisons internes, même protocole.
