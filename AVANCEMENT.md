@@ -64,12 +64,18 @@ sans dépendance fragile.
   **`net_rur` = 0.996** = ultra-homophile (mais sparse). Hypothèse : la faiblesse
   du GNN vient du **graphe fourni**, pas du GNN.
 
-### Pivot Graph ML (en cours)
-Recadrage : le but est le **Graph ML (GNN)**, pas le ML tabulaire. On construit un
-volet GNN dédié pour rester sur le sujet :
-1. **Sweep de relations** — GraphSAGE par relation (`net_rur` vs `homo`). **EN COURS.**
-2. **GAT** — attention pour ignorer les voisins camouflés (codé, testé).
-3. **GNN multi-relationnel** — combiner les 3 relations (à venir).
+### Pivot Graph ML
+Recadrage : le but est le **Graph ML (GNN)**, pas le ML tabulaire. Volet GNN dédié :
+
+1. **Sweep de relations** ✅ — GraphSAGE par relation (5 seeds) :
+   - `net_rur` (homophile 0.996) : AUC-ROC **0.913**, AUC-PR 0.680
+   - `homo` : 0.894 / 0.676 ; `net_rtr` : 0.874 / 0.626
+   - L'AUC-ROC suit l'homophilie (relation = un levier), MAIS aucun single-relation
+     ne bat XGBoost, car `net_rur` a **48 % de nœuds isolés** (propre mais ne couvre rien).
+2. **GAT** — attention par arête (`src/models/gat.py`). **Codé + testé, pas encore benchmarké.**
+3. **GNN multi-relationnel** — combine les 3 relations (`src/models/multi_rel_gnn.py`,
+   `src/experiments/multi_rel.py`). **Codé + testé, benchmark non terminé** (arrêté en cours).
+   Lancer : `python -m src.experiments.multi_rel 5`.
 
 ### Étape 3 — Graphe fiscal (stub)
 `src/data/fiscal_graph.py` = signature + TODOs, `NotImplementedError`. Attend les
@@ -77,9 +83,9 @@ vraies données fiscales (relations attendues homophiles : dirigeant/adresse/
 comptable communs → terrain où le GNN devrait gagner).
 
 ## 4. État actuel
-- 18 tests pytest passent. Code poussé sur `impl-pipeline`, PR #1 ouverte.
-- Job en cours : sweep GraphSAGE `net_rur`/`net_rtr` (5 seeds).
-- Reste : finir sweep → GAT → multi-relationnel → (puis données fiscales).
+- **20 tests pytest passent.** Code poussé sur `impl-pipeline`, PR #1 ouverte.
+- Aucun job en cours.
+- Reste : benchmarker GAT + finir multi-relationnel → bilan Graph ML → données fiscales.
 
 ## 5. Limites assumées
 - YelpChi = banc d'essai, ne se transpose pas mécaniquement au fiscal.
@@ -97,8 +103,16 @@ comptable communs → terrain où le GNN devrait gagner).
 ```
 Tu es un assistant pédagogue. J'ai un projet de fin d'études (PFE) sur la
 détection de fraude fiscale par Graph Machine Learning. Tu as accès à tous les
-fichiers du projet, au journal d'avancement `AVANCEMENT.md`, au cahier des
-charges `FEUILLE_DE_ROUTE.md`, et aux résultats `docs/RESULTATS.md`.
+fichiers du projet.
+
+LIS CES FICHIERS EN PRIORITÉ (dans cet ordre) :
+  1. FEUILLE_DE_ROUTE.md        — cahier des charges initial (le but du projet)
+  2. AVANCEMENT.md              — journal de bord : ce qui a été fait et pourquoi
+  3. docs/RESULTATS.md          — tous les résultats chiffrés + leur analyse
+  4. docs/superpowers/specs/    — la spec de conception (architecture décidée)
+  5. docs/superpowers/plans/    — le plan d'implémentation détaillé
+  6. src/                       — le code (modèles, entraînement, données, métriques)
+  7. tests/                     — les tests (montrent le comportement attendu)
 
 Explique-moi le projet EN DÉTAIL et de façon PÉDAGOGIQUE, comme si je devais le
 présenter à un jury sans tout maîtriser. Structure ta réponse ainsi :
