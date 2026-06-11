@@ -65,15 +65,32 @@ sparse). **Hypothèse centrale du volet Graph ML** : la faiblesse de GraphSAGE
 vient du graphe fourni, pas du GNN. Sur `net_rur`, le message-passing devrait
 enfin payer.
 
-## Expériences Graph ML (en cours)
+## Expériences Graph ML
 
-Volet GNN dédié, pour rester sur le sujet (Graph ML, pas du tabulaire) :
+### Sweep de relations — GraphSAGE par relation (5 seeds)
 
-1. **Sweep de relations** — GraphSAGE par relation (test de l'hypothèse ci-dessus).
-2. **GAT** — attention par arête, downweighte les voisins camouflés (`src/models/gat.py`).
-3. **GNN multi-relationnel** — combine les 3 relations avec poids appris.
+| GraphSAGE sur | AUC-ROC | AUC-PR | homophilie | nœuds isolés |
+|---|---|---|---|---|
+| net_rur | 0.913 ± 0.004 | 0.680 ± 0.010 | 0.996 | 48.1 % |
+| homo | 0.894 ± 0.002 | 0.676 ± 0.006 | 0.773 | 0.0 % |
+| net_rtr | 0.874 ± 0.004 | 0.626 ± 0.004 | 0.759 | 1.1 % |
+| *XGBoost (réf.)* | *0.946* | *0.819* | — | — |
 
-Résultats ajoutés ici à mesure.
+**Hypothèse partiellement confirmée.** L'AUC-ROC suit l'homophilie : `net_rur`
+(0.996) > `homo` (0.773) > `net_rtr` (0.759), et GraphSAGE classe les relations
+dans le même ordre (0.913 > 0.894 > 0.874). Donc **le graphe fourni compte** —
+ce n'était pas qu'un défaut du GNN.
+
+**Mais la conclusion ne s'inverse pas.** L'AUC-PR ne bouge quasi pas (0.680 vs
+0.676) et **aucun GNN single-relation ne bat XGBoost**. Raison : `net_rur` est
+ultra-propre mais **48 % des nœuds y sont isolés** (degré 0) → le message-passing
+ne peut pas atteindre la moitié du graphe. Homophilie haute, couverture faible.
+
+→ Motive le **GNN multi-relationnel** : combiner le signal propre de `net_rur`
+(là où il existe) avec la couverture des relations denses. Empiriquement justifié.
+
+### GAT — `src/models/gat.py` (codé, testé) — à benchmarker
+### GNN multi-relationnel — à construire (prochaine étape)
 
 ## Réponse (provisoire) à la question de recherche
 
