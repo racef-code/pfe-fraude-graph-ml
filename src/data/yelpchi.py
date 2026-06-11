@@ -77,3 +77,51 @@ def load_yelpchi(seed: int = 42, relation: str = "homo") -> Data:
         val_mask=_mask(val_idx),
         test_mask=_mask(test_idx),
     )
+
+
+def load_yelpchi_multi(seed: int = 42, relations=("net_rur", "net_rtr", "net_rsr")):
+    """Charge YelpChi avec PLUSIEURS relations (pour GNN multi-relationnel).
+
+    Renvoie (data, edge_index_list) :
+      - data : Data standard (x, y, masks) ; data.edge_index = 1re relation (compat).
+      - edge_index_list : un edge_index par relation, dans l'ordre `relations`.
+    Splits stratifiés 60/20/20 identiques à load_yelpchi (même seed).
+    """
+    _download()
+    mat = sio.loadmat(_MAT)
+    x = torch.tensor(np.asarray(mat["features"].todense()), dtype=torch.float)
+    y = torch.tensor(np.asarray(mat["label"]).flatten(), dtype=torch.long)
+
+    edge_index_list = []
+    for rel in relations:
+        if rel not in RELATIONS:
+            raise ValueError(f"relation inconnue: {rel!r}")
+        adj = sp.coo_matrix(mat[rel])
+        edge_index_list.append(
+            torch.tensor(np.vstack([adj.row, adj.col]), dtype=torch.long)
+        )
+
+    n = x.shape[0]
+    idx = np.arange(n)
+    ynp = y.numpy()
+    train_idx, tmp = train_test_split(
+        idx, test_size=0.4, random_state=seed, stratify=ynp
+    )
+    val_idx, test_idx = train_test_split(
+        tmp, test_size=0.5, random_state=seed, stratify=ynp[tmp]
+    )
+
+    def _mask(indices):
+        m = torch.zeros(n, dtype=torch.bool)
+        m[indices] = True
+        return m
+
+    data = Data(
+        x=x,
+        edge_index=edge_index_list[0],
+        y=y,
+        train_mask=_mask(train_idx),
+        val_mask=_mask(val_idx),
+        test_mask=_mask(test_idx),
+    )
+    return data, edge_index_list
