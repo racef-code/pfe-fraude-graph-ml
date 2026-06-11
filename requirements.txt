@@ -1,0 +1,7 @@
+torch==2.9.1
+torch_geometric>=2.6
+xgboost>=2.0
+scikit-learn>=1.4
+pandas>=2.0
+numpy>=1.26
+pytest>=8.0
