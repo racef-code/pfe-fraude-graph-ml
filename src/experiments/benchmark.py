@@ -70,19 +70,49 @@ def _run_one_seed(seed: int, relation: str, cfg: TrainConfig) -> dict:
     }
 
 
-def run_benchmark(seeds=(0, 1, 2), relation: str = "homo", cfg: TrainConfig | None = None):
-    """Renvoie {model: {metric: (mean, std)}} agrégé sur les seeds."""
+def run_benchmark(
+    seeds=(0, 1, 2),
+    relation: str = "homo",
+    cfg: TrainConfig | None = None,
+    return_per_seed: bool = False,
+):
+    """Renvoie {model: {metric: (mean, std)}} agrégé sur les seeds.
+
+    Si return_per_seed=True, renvoie aussi la liste brute par seed
+    [{model: {metric: value}}] pour les comparaisons APPARIÉES (même split).
+    """
     cfg = cfg or TrainConfig()
+    per_seed = []
     acc = defaultdict(lambda: defaultdict(list))
     for seed in seeds:
         res = _run_one_seed(seed, relation, cfg)
+        per_seed.append(res)
         for model, metrics in res.items():
             for k, v in metrics.items():
                 acc[model][k].append(v)
     out = {}
     for model, metrics in acc.items():
         out[model] = {k: (float(np.mean(v)), float(np.std(v))) for k, v in metrics.items()}
+    if return_per_seed:
+        return out, per_seed
     return out
+
+
+def paired_delta(per_seed, model: str, baseline: str, metric: str) -> dict:
+    """Delta apparié (model - baseline) du `metric`, seed par seed.
+
+    Comparaison correcte quand les deux modèles partagent le même split par
+    seed : on regarde la distribution des différences, pas le chevauchement
+    des bandes marginales. Renvoie mean, std et nb de seeds où model > baseline.
+    """
+    diffs = [s[model][metric] - s[baseline][metric] for s in per_seed]
+    diffs = np.asarray(diffs)
+    return {
+        "mean": float(diffs.mean()),
+        "std": float(diffs.std()),
+        "n_positive": int((diffs > 0).sum()),
+        "n_total": len(diffs),
+    }
 
 
 def format_table(results: dict, n_seeds: int) -> str:
