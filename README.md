@@ -28,3 +28,5 @@ GraphSAGE / GNN hétérogène (relations) vs XGBoost (isolé) sur AUC-ROC, AUC-P
 - Plan et résultats Graph ML : `docs/GRAPH_ADVANTAGE_PLAN.md`, `docs/RESULTATS_GRAPH_ADVANTAGE.md`.
 - Baseline audit décisive : `docs/RESULTATS_GRAPH_FEATURE_BASELINE.md`.
 - Corrections post-audit : `docs/AUDIT_CHANGES_APPLIED.md`.
+- Benchmark synthétique renforcé : `docs/RESULTATS_SYNTHETIC_STRONGER_AUDIT.md`.
+- Dataset alternatif TED tax evasion : `docs/RESULTATS_TED_TAX_DATASET.md`.

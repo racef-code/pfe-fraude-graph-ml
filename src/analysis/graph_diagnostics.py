@@ -43,13 +43,22 @@ def company_pairs_for_relation(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, r
     ]
     for src, dst in zip(direct["id_source"], direct["id_cible"]):
         if src != dst:
-            pairs.add(tuple(sorted((src, dst))))
+            pairs.add(tuple(sorted((src, dst), key=str)))
 
-    bip = rel_edges[
-        rel_edges["id_source"].isin(company_ids) & ~rel_edges["id_cible"].isin(company_ids)
-    ]
-    for _, group in bip.groupby("id_cible"):
-        companies = sorted(set(group["id_source"]), key=str)
+    # Heterogeneous company-support relations projected by shared support node.
+    # Support nodes can appear either as target (company -> support) or source
+    # (support -> company), depending on the dataset's edge direction convention.
+    support_to_companies: dict[object, set[object]] = {}
+    for src, dst in zip(rel_edges["id_source"], rel_edges["id_cible"]):
+        src_is_company = src in company_ids
+        dst_is_company = dst in company_ids
+        if src_is_company == dst_is_company:
+            continue
+        company = src if src_is_company else dst
+        support = dst if src_is_company else src
+        support_to_companies.setdefault(support, set()).add(company)
+    for companies_for_support in support_to_companies.values():
+        companies = sorted(companies_for_support, key=str)
         for a, b in combinations(companies, 2):
             pairs.add(tuple(sorted((a, b))))
     return pairs

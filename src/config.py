@@ -22,4 +22,5 @@ class TrainConfig:
     epochs: int = 200
     weight_decay: float = 5e-4
     dropout: float = 0.5
-    patience: int = 30  # early-stop on val loss
+    patience: int = 30  # early-stop on validation metric/loss
+    early_stop_metric: str = "loss"  # "loss" or "auc_pr"

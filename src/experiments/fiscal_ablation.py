@@ -38,7 +38,7 @@ def run_one_ablation(seed: int, n_companies: int = 240, epochs: int = 40) -> dic
         set_seed(seed)
         data = build_fiscal_graph(nodes, variant_edges, seed=seed)
         data = standardize_hetero_features(data, target_node_type="company")
-        cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2)
+        cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2, early_stop_metric="auc_pr")
         model = FiscalHeteroGNN(data.metadata(), hidden_dim=cfg.hidden_dim, out_dim=2, dropout=cfg.dropout)
         _ = model(data.x_dict, data.edge_index_dict)
         cw = class_weights_from_labels(data["company"].y[data["company"].train_mask])

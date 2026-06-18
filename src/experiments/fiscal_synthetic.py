@@ -77,7 +77,7 @@ def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: 
     xgb_graph_scores = predict_xgb(xgb_graph, x_company_graph)
 
     # Heterogeneous GNN: company features + relation context.
-    cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2)
+    cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2, early_stop_metric="auc_pr")
     cw = class_weights_from_labels(data["company"].y[data["company"].train_mask])
 
     model = FiscalHeteroGNN(data.metadata(), hidden_dim=cfg.hidden_dim, out_dim=2, dropout=cfg.dropout)
