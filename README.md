@@ -25,3 +25,4 @@ GraphSAGE / GNN hétérogène (relations) vs XGBoost (isolé) sur AUC-ROC, AUC-P
 - Contrat données réelles : `docs/contrat_donnees_is.md`.
 - Recherche datasets : `docs/recherche_datasets_is.md`.
 - Résultats prototype synthétique : `docs/RESULTATS_SYNTHETIC_IS.md`.
+- Plan et résultats Graph ML : `docs/GRAPH_ADVANTAGE_PLAN.md`, `docs/RESULTATS_GRAPH_ADVANTAGE.md`.

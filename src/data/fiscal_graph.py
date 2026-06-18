@@ -302,4 +302,14 @@ def make_synthetic_is_fiscal_tables(
                 dst = int(rng.integers(0, n_companies))
             if dst != i:
                 edges.append({"id_source": c, "id_cible": f"company_{dst}", "type_relation": "transaction"})
+
+        # Participation / contrôle : sparse but important in company fraud. This
+        # gives the synthetic graph a relation closer to group/holding structures.
+        if rng.random() < (0.35 if fraud else 0.12):
+            if fraud and rng.random() < 0.65:
+                dst = int(rng.choice(fraud_idx))
+            else:
+                dst = int(rng.integers(0, n_companies))
+            if dst != i:
+                edges.append({"id_source": c, "id_cible": f"company_{dst}", "type_relation": "participates_in"})
     return nodes, pd.DataFrame(edges)

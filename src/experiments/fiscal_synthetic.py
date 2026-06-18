@@ -20,12 +20,13 @@ from src.data.fiscal_graph import build_fiscal_graph, make_synthetic_is_fiscal_t
 from src.data.transforms import standardize_hetero_features
 from src.eval.metrics import compute_metrics
 from src.models.hetero_fiscal_gnn import FiscalHeteroGNN
+from src.models.relation_gated_fiscal_gnn import RelationGatedFiscalGNN
 from src.train.baseline_xgb import predict_xgb, train_xgb
 from src.train.train_gnn import class_weights_from_labels
 from src.train.train_hetero import predict_hetero_company_scores, train_hetero_company_gnn
 
 METRIC_KEYS = ["auc_roc", "auc_pr", "f1_macro", "gmean", "recall_at_k"]
-MODEL_KEYS = ["XGBoost-company-features", "FiscalHeteroGNN"]
+MODEL_KEYS = ["XGBoost-company-features", "FiscalHeteroGNN", "RelationGatedFiscalGNN"]
 
 
 def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: int = 30):
@@ -52,16 +53,23 @@ def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: 
 
     # Heterogeneous GNN: company features + relation context.
     cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2)
+    cw = class_weights_from_labels(data["company"].y[data["company"].train_mask])
+
     model = FiscalHeteroGNN(data.metadata(), hidden_dim=cfg.hidden_dim, out_dim=2, dropout=cfg.dropout)
     # Initialize lazy PyG modules before optimizer/class-weighted training.
     _ = model(data.x_dict, data.edge_index_dict)
-    cw = class_weights_from_labels(data["company"].y[data["company"].train_mask])
     model = train_hetero_company_gnn(model, data, cfg, class_weight=cw)
     hetero_scores = predict_hetero_company_scores(model, data)
+
+    gated = RelationGatedFiscalGNN(data.metadata(), hidden_dim=cfg.hidden_dim, out_dim=2, dropout=cfg.dropout)
+    _ = gated(data.x_dict, data.edge_index_dict)
+    gated = train_hetero_company_gnn(gated, data, cfg, class_weight=cw)
+    gated_scores = predict_hetero_company_scores(gated, data)
 
     return {
         "XGBoost-company-features": compute_metrics(y[test], xgb_scores[test]),
         "FiscalHeteroGNN": compute_metrics(y[test], hetero_scores[test]),
+        "RelationGatedFiscalGNN": compute_metrics(y[test], gated_scores[test]),
         "n_company": int(data["company"].num_nodes),
         "n_test_company": int(test.sum()),
         "edge_types": [str(t) for t in data.edge_types],
@@ -123,12 +131,20 @@ def format_benchmark(summary: dict, per_seed: list[dict], n_seeds: int) -> str:
             row += f"{mean:.4f}+/-{std:.4f}".ljust(20)
         lines.append(row)
     lines.append(f"\n(moyenne +/- ecart-type sur {n_seeds} seeds; données synthétiques)")
-    for metric in ["auc_pr", "auc_roc", "recall_at_k"]:
-        d = paired_delta(per_seed, "FiscalHeteroGNN", "XGBoost-company-features", metric)
-        lines.append(
-            f"Delta FiscalHeteroGNN - XGBoost ({metric}): "
-            f"{d['mean']:+.4f}+/-{d['std']:.4f}, positives {d['n_positive']}/{d['n_total']}"
-        )
+    for model in [m for m in MODEL_KEYS if m != "XGBoost-company-features"]:
+        for metric in ["auc_pr", "auc_roc", "recall_at_k"]:
+            d = paired_delta(per_seed, model, "XGBoost-company-features", metric)
+            lines.append(
+                f"Delta {model} - XGBoost ({metric}): "
+                f"{d['mean']:+.4f}+/-{d['std']:.4f}, positives {d['n_positive']}/{d['n_total']}"
+            )
+    if "RelationGatedFiscalGNN" in MODEL_KEYS:
+        for metric in ["auc_pr", "auc_roc", "f1_macro", "gmean"]:
+            d = paired_delta(per_seed, "RelationGatedFiscalGNN", "FiscalHeteroGNN", metric)
+            lines.append(
+                f"Delta RelationGated - equal-sum HeteroGNN ({metric}): "
+                f"{d['mean']:+.4f}+/-{d['std']:.4f}, positives {d['n_positive']}/{d['n_total']}"
+            )
     return "\n".join(lines)
 
 
