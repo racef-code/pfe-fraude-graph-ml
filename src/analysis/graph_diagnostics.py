@@ -2,7 +2,8 @@
 
 These diagnostics answer the PFE question behind the model scores: is there
 actually exploitable relational signal in the graph, and which relation carries
-it?
+it? Label-derived diagnostics can be restricted to a train label scope to avoid
+peeking at validation/test labels on real data.
 """
 from __future__ import annotations
 
@@ -15,8 +16,10 @@ COMPANY = "company"
 LABEL = "label"
 
 
-def _company_labels(nodes_df: pd.DataFrame) -> dict[object, int]:
+def _company_labels(nodes_df: pd.DataFrame, label_company_ids: set[object] | None = None) -> dict[object, int]:
     companies = nodes_df[(nodes_df["type"] == COMPANY) & (nodes_df[LABEL].notna())]
+    if label_company_ids is not None:
+        companies = companies[companies["id"].isin(label_company_ids)]
     return dict(zip(companies["id"], companies[LABEL].astype(int)))
 
 
@@ -35,7 +38,6 @@ def company_pairs_for_relation(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, r
     rel_edges = edges_df[edges_df["type_relation"] == relation]
     pairs: set[tuple[object, object]] = set()
 
-    # Direct company-company relations.
     direct = rel_edges[
         rel_edges["id_source"].isin(company_ids) & rel_edges["id_cible"].isin(company_ids)
     ]
@@ -43,7 +45,6 @@ def company_pairs_for_relation(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, r
         if src != dst:
             pairs.add(tuple(sorted((src, dst))))
 
-    # Bipartite company-support relations projected by shared support node.
     bip = rel_edges[
         rel_edges["id_source"].isin(company_ids) & ~rel_edges["id_cible"].isin(company_ids)
     ]
@@ -54,8 +55,22 @@ def company_pairs_for_relation(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, r
     return pairs
 
 
-def relation_diagnostics(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, relation: str) -> dict:
-    labels = _company_labels(nodes_df)
+def relation_diagnostics(
+    nodes_df: pd.DataFrame,
+    edges_df: pd.DataFrame,
+    relation: str,
+    *,
+    label_company_ids: set[object] | list[object] | None = None,
+) -> dict:
+    """Compute relation-level graph diagnostics.
+
+    ``label_company_ids`` restricts all label-derived diagnostics (homophily,
+    fraud-neighbor lift, global fraud rate) to a safe label scope, typically the
+    train companies. If omitted, all known labels are used for exploratory
+    synthetic diagnostics only.
+    """
+    label_scope = set(label_company_ids) if label_company_ids is not None else None
+    labels = _company_labels(nodes_df, label_scope)
     company_ids = _company_ids(nodes_df)
     pairs = company_pairs_for_relation(nodes_df, edges_df, relation)
 
@@ -67,9 +82,9 @@ def relation_diagnostics(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, relatio
     fraud_ids = {c for c, y in labels.items() if y == 1}
     nonfraud_ids = {c for c, y in labels.items() if y == 0}
     global_rate = len(fraud_ids) / max(len(labels), 1)
+    homophily_null = global_rate**2 + (1.0 - global_rate) ** 2 if labels else float("nan")
+    homophily_over_null = homophily - homophily_null if not np.isnan(homophily) and not np.isnan(homophily_null) else float("nan")
 
-    # Neighbor fraud lift: among neighbors of fraud companies, how enriched are
-    # fraud labels compared with the global labeled fraud rate?
     fraud_neighbors = set()
     nonfraud_neighbors = set()
     for a, b in pairs:
@@ -101,15 +116,23 @@ def relation_diagnostics(nodes_df: pd.DataFrame, edges_df: pd.DataFrame, relatio
         "isolated_rate": 1.0 - (len(connected) / max(len(company_ids), 1)),
         "avg_degree": float(np.mean(list(degrees.values()))) if degrees else 0.0,
         "homophily": float(homophily),
+        "homophily_null": float(homophily_null),
+        "homophily_over_null": float(homophily_over_null),
         "fraud_neighbor_lift": float(fraud_neighbor_lift),
         "neighbor_fraud_rate": float(neighbor_fraud_rate),
         "global_fraud_rate": float(global_rate),
+        "label_scope": "train_or_provided" if label_scope is not None else "all_known",
     }
 
 
-def graph_diagnostics(nodes_df: pd.DataFrame, edges_df: pd.DataFrame) -> list[dict]:
+def graph_diagnostics(
+    nodes_df: pd.DataFrame,
+    edges_df: pd.DataFrame,
+    *,
+    label_company_ids: set[object] | list[object] | None = None,
+) -> list[dict]:
     return [
-        relation_diagnostics(nodes_df, edges_df, rel)
+        relation_diagnostics(nodes_df, edges_df, rel, label_company_ids=label_company_ids)
         for rel in sorted(edges_df["type_relation"].dropna().unique())
     ]
 
@@ -117,9 +140,10 @@ def graph_diagnostics(nodes_df: pd.DataFrame, edges_df: pd.DataFrame) -> list[di
 def format_diagnostics(rows: list[dict]) -> str:
     cols = [
         "relation", "raw_edges", "company_pairs", "coverage", "isolated_rate",
-        "avg_degree", "homophily", "fraud_neighbor_lift",
+        "avg_degree", "homophily", "homophily_null", "homophily_over_null", "fraud_neighbor_lift",
     ]
-    lines = ["Graph diagnostics by relation"]
+    label_scope = rows[0].get("label_scope", "unknown") if rows else "unknown"
+    lines = [f"Graph diagnostics by relation (label_scope={label_scope})"]
     header = "".join(c.ljust(22) for c in cols)
     lines.append(header)
     lines.append("-" * len(header))

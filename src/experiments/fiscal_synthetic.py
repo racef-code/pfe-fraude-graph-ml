@@ -19,6 +19,7 @@ from src.config import TrainConfig, set_seed
 from src.data.fiscal_graph import build_fiscal_graph, make_synthetic_is_fiscal_tables
 from src.data.transforms import standardize_hetero_features
 from src.eval.metrics import compute_metrics
+from src.features.fiscal_graph_features import compute_fiscal_graph_features
 from src.models.hetero_fiscal_gnn import FiscalHeteroGNN
 from src.models.relation_gated_fiscal_gnn import RelationGatedFiscalGNN
 from src.train.baseline_xgb import predict_xgb, train_xgb
@@ -26,7 +27,15 @@ from src.train.train_gnn import class_weights_from_labels
 from src.train.train_hetero import predict_hetero_company_scores, train_hetero_company_gnn
 
 METRIC_KEYS = ["auc_roc", "auc_pr", "f1_macro", "gmean", "recall_at_k"]
-MODEL_KEYS = ["XGBoost-company-features", "FiscalHeteroGNN", "RelationGatedFiscalGNN"]
+MODEL_KEYS = [
+    "XGBoost-company-features",
+    "XGBoost-company+graph-features",
+    "FiscalHeteroGNN",
+    "RelationGatedFiscalGNN",
+]
+
+
+MODEL_NAME_WIDTH = 36
 
 
 def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: int = 30):
@@ -47,9 +56,25 @@ def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: 
     n_neg, n_pos = (y[train] == 0).sum(), (y[train] == 1).sum()
     spw = n_neg / max(n_pos, 1)
 
-    # Baseline: company behavior/features only, no graph message-passing.
+    # Baseline 1: company behavior/features only, no graph information.
     xgb = train_xgb(x_company[train], y[train], scale_pos_weight=spw)
     xgb_scores = predict_xgb(xgb, x_company)
+
+    # Baseline 2: company features + leak-free handcrafted graph features.
+    # This is the critical audit baseline: it tests whether graph information
+    # helps without message passing. Any label-derived graph feature uses train
+    # company labels only.
+    company_ids = list(data["company"].node_id)
+    train_company_ids = {cid for cid, is_train in zip(company_ids, train) if is_train}
+    x_graph, graph_feature_names = compute_fiscal_graph_features(
+        nodes,
+        edges,
+        company_ids=company_ids,
+        train_company_ids=train_company_ids,
+    )
+    x_company_graph = np.concatenate([x_company, x_graph], axis=1)
+    xgb_graph = train_xgb(x_company_graph[train], y[train], scale_pos_weight=spw)
+    xgb_graph_scores = predict_xgb(xgb_graph, x_company_graph)
 
     # Heterogeneous GNN: company features + relation context.
     cfg = TrainConfig(hidden_dim=32, lr=0.01, epochs=epochs, patience=10, dropout=0.2)
@@ -68,10 +93,13 @@ def run_synthetic_is_experiment(seed: int = 42, n_companies: int = 240, epochs: 
 
     return {
         "XGBoost-company-features": compute_metrics(y[test], xgb_scores[test]),
+        "XGBoost-company+graph-features": compute_metrics(y[test], xgb_graph_scores[test]),
         "FiscalHeteroGNN": compute_metrics(y[test], hetero_scores[test]),
         "RelationGatedFiscalGNN": compute_metrics(y[test], gated_scores[test]),
         "n_company": int(data["company"].num_nodes),
         "n_test_company": int(test.sum()),
+        "n_graph_features": int(x_graph.shape[1]),
+        "graph_feature_names": graph_feature_names,
         "edge_types": [str(t) for t in data.edge_types],
     }
 
@@ -115,29 +143,41 @@ def format_single_result(results: dict) -> str:
             lines.append(f"  {k:12s}: {results[model][k]:.4f}")
     lines.append(f"n_company: {results['n_company']}")
     lines.append(f"n_test_company: {results['n_test_company']}")
+    lines.append(f"n_graph_features: {results.get('n_graph_features', 0)}")
     lines.append(f"edge_types: {len(results['edge_types'])}")
     return "\n".join(lines)
 
 
 def format_benchmark(summary: dict, per_seed: list[dict], n_seeds: int) -> str:
     lines = ["Synthetic IS heterogeneous benchmark", ""]
-    header = "Model".ljust(28) + "".join(k.ljust(20) for k in METRIC_KEYS)
+    header = "Model".ljust(MODEL_NAME_WIDTH) + "".join(k.ljust(20) for k in METRIC_KEYS)
     lines.append(header)
     lines.append("-" * len(header))
     for model in MODEL_KEYS:
-        row = model.ljust(28)
+        row = model.ljust(MODEL_NAME_WIDTH)
         for metric in METRIC_KEYS:
             mean, std = summary[model][metric]
             row += f"{mean:.4f}+/-{std:.4f}".ljust(20)
         lines.append(row)
     lines.append(f"\n(moyenne +/- ecart-type sur {n_seeds} seeds; données synthétiques)")
+    if n_seeds < 10:
+        lines.append("WARNING: audit-grade reporting should use >=10 seeds; this run is a smoke/iteration run.")
     for model in [m for m in MODEL_KEYS if m != "XGBoost-company-features"]:
         for metric in ["auc_pr", "auc_roc", "recall_at_k"]:
             d = paired_delta(per_seed, model, "XGBoost-company-features", metric)
             lines.append(
-                f"Delta {model} - XGBoost ({metric}): "
+                f"Delta {model} - XGBoost-company ({metric}): "
                 f"{d['mean']:+.4f}+/-{d['std']:.4f}, positives {d['n_positive']}/{d['n_total']}"
             )
+    graph_baseline = "XGBoost-company+graph-features"
+    for model in ["FiscalHeteroGNN", "RelationGatedFiscalGNN"]:
+        if model in MODEL_KEYS and graph_baseline in MODEL_KEYS:
+            for metric in ["auc_pr", "auc_roc", "recall_at_k"]:
+                d = paired_delta(per_seed, model, graph_baseline, metric)
+                lines.append(
+                    f"Delta {model} - XGBoost+graph ({metric}): "
+                    f"{d['mean']:+.4f}+/-{d['std']:.4f}, positives {d['n_positive']}/{d['n_total']}"
+                )
     if "RelationGatedFiscalGNN" in MODEL_KEYS:
         for metric in ["auc_pr", "auc_roc", "f1_macro", "gmean"]:
             d = paired_delta(per_seed, "RelationGatedFiscalGNN", "FiscalHeteroGNN", metric)
